@@ -1,0 +1,23 @@
+{
+  "name": "wot-utils",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lukesmolo/wot-utils.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lukesmolo/wot-utils/issues"
+  },
+  "homepage": "https://github.com/lukesmolo/wot-utils#readme",
+  "dependencies": {
+    "node-opcua": "^2.63.2"
+  }
+}
