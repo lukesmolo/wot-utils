@@ -1,169 +1,186 @@
-const opcua = require("node-opcua");
-const crypto_utils = require("node-opcua-crypto");
+const { OPCUAServer, DataType, Variant, StatusCodes } = require("node-opcua");
+const { readCertificate } = require("node-opcua-crypto");
 
-var auth = null;
-//var auth = 'password';
-//var auth = 'certificate';
+const auth = null;
+//const auth = 'password';
+//const auth = 'certificate';
 
 const userManager = {
-
-	isValidUser: function (userName, password) {
-		return ( userName === "root" && password === "root" );
-	}
+  isValidUser: function (userName, password) {
+    return userName === "root" && password === "root";
+  },
 };
 
-
 // Let's create an instance of OPCUAServer
-const server = new opcua.OPCUAServer({
-	port: 5050, // the port of the listening socket of the server
-	resourcePath: "/opcua/server", // this path will be added to the endpoint resource name
-	allowAnonymous: true,
-	certificateFile: "./certificates/server_cert.pem",
-	privateKeyFile: "./certificates/server_key.pem",
-	userManager: auth === "password" ? userManager: null
-});
-
 
 (async () => {
-	await server.initialize();
-	construct_my_address_space(server);
-	console.log("initialized");
-	await server.start();
-	if(auth === "certificate") {
-		const clientCertificate = crypto_utils.readCertificate('./certificates/client_cert.pem');
-		await server.userCertificateManager.trustCertificate(clientCertificate);
-	}
+  try {
+    const server = new OPCUAServer({
+      port: 5050, // the port of the listening socket of the server
+      resourcePath: "/opcua/server", // this path will be added to the endpoint resource name
+      allowAnonymous: true,
+      userManager: auth === "password" ? userManager : null,
+    });
 
-	console.log("Server is now listening ... ( press CTRL+C to stop)");
-	console.log("port ", server.endpoints[0].port);
+    await server.initialize();
 
-	const endpointUrl = server.endpoints[0].endpointDescriptions()[0].endpointUrl;
-	console.log(" the primary server endpoint url is ", endpointUrl);
+    constructAddressSpace(server);
+
+    console.log("initialized");
+
+    await server.start();
+
+    if (auth === "certificate") {
+      const clientCertificate = readCertificate(
+        "./certificates/client_cert.pem"
+      );
+      await server.userCertificateManager.trustCertificate(clientCertificate);
+    }
+
+    console.log("Server is now listening ... ( press CTRL+C to stop)");
+    console.log(
+      " the primary server endpoint url is ",
+      server.getEndpointUrl()
+    );
+
+    process.once("SIGINT", () => {
+      server.shutdown(() => {
+        console.log("server has been shutdown");
+        process.exit(0);
+      });
+    });
+  } catch (err) {
+    console.log(err);
+    process.exit(1);
+  }
 })();
 
-function construct_my_address_space(server) {
+function constructAddressSpace(server) {
+  const addressSpace = server.engine.addressSpace;
+  const namespace = addressSpace.getOwnNamespace();
 
-	const addressSpace = server.engine.addressSpace;
-	const namespace = addressSpace.getOwnNamespace();
+  // OBJECTS
+  const device = namespace.addObject({
+    organizedBy: addressSpace.rootFolder.objects,
+    nodeId: "s=WotDevice",
+    browseName: "WotDevice",
+    targetName: {
+      namespaceIndex: 1,
+      name: "device",
+    },
+  });
 
+  // VARIABLES
+  const incrementVariable = namespace.addVariable({
+    componentOf: device,
+    nodeId: "s=WotDevice.Increment",
+    browseName: "Increment",
+    dataType: "Double",
+  });
+  let variable = 1;
+  setInterval(function () {
+    variable += 1;
+    incrementVariable.setValueFromSource({
+      dataType: DataType.Double,
+      value: variable,
+    });
+  }, 1000);
 
-	// OBJECTS
-	const device = namespace.addObject({
-		organizedBy: addressSpace.rootFolder.objects,
-		nodeId: "ns=1;b=9990FFAA", // some opaque NodeId in namespace 4
-		browseName: "WotDevice",
-		targetName: {
-			namespaceIndex: 1,
-			name: "device"
-		},
-	});
+  namespace.addVariable({
+    nodeId: "s=RandomValue",
+    browseName: "RandomValue",
+    dataType: "Double",
+    value: {
+      get: function () {
+        return new Variant({
+          dataType: DataType.Double,
+          value: Math.random(),
+        });
+      },
+      set: function (variant) {
+        //write property
+        variable1 = parseFloat(variant.value);
+        return StatusCodes.Good;
+      },
+    },
+  });
 
-	// VARIABLES
+  const divideMethod = namespace.addMethod(device, {
+    //invoke action
+    browseName: "Divide",
+    nodeId: "s=Divide",
+    inputArguments: [
+      {
+        name: "a",
+        description: { text: "specifies the first number" },
+        dataType: DataType.Double,
+      },
+      {
+        name: "b",
+        description: { text: "specifies the second number" },
+        dataType: DataType.Double,
+      },
+    ],
 
-	let variable = 1;
-	setInterval(function(){  variable += 1; }, 1000);
+    outputArguments: [
+      {
+        name: "result",
+        description: { text: "the result of the division operation" },
+        dataType: DataType.Double,
+      },
+    ],
+  });
 
-	namespace.addVariable({
-		componentOf: device,
-		nodeId: "ns=1;b=9998FFAA", // some opaque NodeId in namespace 4
-		browseName: "Increment",
-		dataType: "Double",
-		value: {
-			get: function () {
-				return new opcua.Variant({dataType: opcua.DataType.Double, value: variable });
-			}
-		}
-	});
+  divideMethod.bindMethod(async (inputArguments, context) => {
+    const a = inputArguments[0].value;
+    const b = inputArguments[1].value;
+    if (b === 0) {
+      return { statusCode: StatusCodes.BadInvalidArgument };
+    }
+    let res = a / b;
+    return {
+      statusCode: StatusCodes.Good,
+      outputArguments: [
+        {
+          dataType: DataType.Double,
+          value: res,
+        },
+      ],
+    };
+  });
 
+  const squareMethod = namespace.addMethod(device, {
+    //invoke action
+    browseName: "Square",
+    nodeId: "s=Square",
+    inputArguments: [
+      {
+        name: "value",
+        description: { text: "specifies the first number" },
+        dataType: DataType.Double,
+      },
+    ],
 
-	namespace.addVariable({
-		nodeId: "ns=1;b=9999FFAA",
-		browseName: "RandomValue",
-		dataType: "Double",
-		value: {
-			get: function () {
-				return new opcua.Variant({dataType: opcua.DataType.Double, value: Math.random()});
-			},
-			set: function (variant) { //write property
-				variable1 = parseFloat(variant.value);
-				return opcua.StatusCodes.Good;
-			}
-		}
-	});
+    outputArguments: [
+      {
+        name: "result",
+        description: { text: "the result of the square function" },
+        dataType: DataType.Double,
+      },
+    ],
+  });
 
-	const method = namespace.addMethod(device, { //invoke action
-
-		browseName: "DivideFunction",
-		nodeId: "ns=1;b=9997FFAA",
-		inputArguments:  [
-			{
-				name:"a",
-				description: { text: "specifies the first number" },
-				dataType: opcua.DataType.Double
-			},{
-				name:"b",
-				description: { text: "specifies the second number" },
-				dataType: opcua.DataType.Double
-			}
-		],
-
-		outputArguments: [{
-			name: "division",
-			description:{ text: "the generated barks" },
-			dataType: opcua.DataType.Double,
-			valueRank: 1
-		}]
-	});
-
-	method.bindMethod((inputArguments,context,callback) => {
-
-		const a = inputArguments[0].value;
-		const b =  inputArguments[1].value;
-
-		let res = a/b;
-		const callMethodResult = {
-			statusCode: opcua.StatusCodes.Good,
-			outputArguments: [{
-				dataType: opcua.DataType.Double,
-				value: res
-			}]
-		};
-		callback(null,callMethodResult);
-	});
-
-	const method1 = namespace.addMethod(device, { //invoke action
-
-		browseName: "SquareFunction",
-		nodeId: "ns=1;s=squareFunction",
-		inputArguments:  [
-			{
-				name: "value",
-				description: { text: "specifies the first number" },
-				dataType: opcua.DataType.Double
-			}
-		],
-
-		outputArguments: [{
-			name: "square",
-			description:{ text: "the generated barks" },
-			dataType: opcua.DataType.Double,
-			valueRank: 1
-		}]
-	});
-
-	method1.bindMethod((inputArguments,context,callback) => {
-
-		const a = inputArguments[0].value;
-
-		let res = a*a;
-		const callMethodResult = {
-			statusCode: opcua.StatusCodes.Good,
-			outputArguments: [{
-				dataType: opcua.DataType.Double,
-				value: res
-			}]
-		};
-		callback(null,callMethodResult);
-	});
-
+  squareMethod.bindMethod(async (inputArguments, context) => {
+    const a = inputArguments[0].value;
+    let res = a * a;
+    return {
+      statusCode: StatusCodes.Good,
+      outputArguments: [
+        {
+          dataType: DataType.Double,
+          value: res,
+        },
+      ],
+    };
+  });
 }
